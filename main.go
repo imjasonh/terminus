@@ -44,6 +44,7 @@ func main() {
 
 	// Initialize game components
 	player := game.NewPlayer(spawnX, spawnY)
+	projectileManager := game.NewProjectileManager()
 	gameScreen := screen.NewScreen(width, height)
 	gameRenderer := renderer.NewRenderer(width, height)
 
@@ -89,17 +90,44 @@ func main() {
 			lastTime = currentTime
 
 			// Process input
-			processInput(inputCh, player, deltaTime, worldMap)
+			processInput(inputCh, player, deltaTime, worldMap, projectileManager)
 
-			// Render the game
-			gameRenderer.Render(player, worldMap, gameScreen)
+			// Update projectiles
+			projectileManager.Update(deltaTime, worldMap)
+
+			// Create debug message for HUD
+			activeCount := 0
+			var nearestFireball *game.Projectile
+			for _, p := range projectileManager.Projectiles {
+				if p.Active && p.Type == game.Fireball {
+					activeCount++
+					if nearestFireball == nil {
+						nearestFireball = p
+					}
+				}
+			}
+
+			debugMsg := fmt.Sprintf("Player: (%.1f,%.1f) | Fireballs: %d",
+				player.Position.X, player.Position.Y, activeCount)
+
+			if nearestFireball != nil {
+				debugMsg = fmt.Sprintf("Player: (%.1f,%.1f) | FB: %d at (%.1f,%.1f) Life: %.1f",
+					player.Position.X, player.Position.Y, activeCount,
+					nearestFireball.Position.X, nearestFireball.Position.Y, nearestFireball.Life)
+			}
+
+			gameScreen.SetDebugMessage(debugMsg)
+
+			// Render the game with lighting
+			lights := projectileManager.GetActiveLights()
+			gameRenderer.Render(player, worldMap, gameScreen, lights, projectileManager.Projectiles)
 			fmt.Print(gameScreen.Render())
 
 		}
 	}
 }
 
-func processInput(inputCh chan byte, player *game.Player, deltaTime float64, worldMap *game.Map) {
+func processInput(inputCh chan byte, player *game.Player, deltaTime float64, worldMap *game.Map, projectileManager *game.ProjectileManager) {
 	// Process all available input
 	for {
 		select {
@@ -117,6 +145,10 @@ func processInput(inputCh chan byte, player *game.Player, deltaTime float64, wor
 				player.RotateRight(deltaTime)
 			case 'e', 'E':
 				player.RotateLeft(deltaTime)
+			case ' ':
+				// Shoot fireball
+				fireball := game.NewFireball(player.Position, player.Direction)
+				projectileManager.AddProjectile(fireball)
 			case 27: // ESC key
 				fmt.Print("\x1b[?25h\x1b[2J\x1b[H") // Show cursor and clear screen
 				os.Exit(0)

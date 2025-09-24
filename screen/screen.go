@@ -13,9 +13,11 @@ type Cell struct {
 }
 
 type Screen struct {
-	Width  int
-	Height int
-	Buffer [][]Cell
+	Width      int
+	Height     int
+	GameHeight int // Height available for game rendering (excludes HUD)
+	Buffer     [][]Cell
+	debugMsg   string
 }
 
 func NewScreen(width, height int) *Screen {
@@ -32,14 +34,17 @@ func NewScreen(width, height int) *Screen {
 	}
 
 	return &Screen{
-		Width:  width,
-		Height: height,
-		Buffer: buffer,
+		Width:      width,
+		Height:     height,
+		GameHeight: height - 2, // Reserve 2 bottom rows for HUD
+		Buffer:     buffer,
+		debugMsg:   "",
 	}
 }
 
 func (s *Screen) Clear() {
-	for y := 0; y < s.Height; y++ {
+	// Only clear the game area, not the HUD
+	for y := 0; y < s.GameHeight; y++ {
 		for x := 0; x < s.Width; x++ {
 			s.Buffer[y][x] = Cell{
 				Char:    ' ',
@@ -50,8 +55,13 @@ func (s *Screen) Clear() {
 	}
 }
 
+func (s *Screen) SetDebugMessage(msg string) {
+	s.debugMsg = msg
+}
+
 func (s *Screen) SetCell(x, y int, char rune, fg, bg color.RGBA) {
-	if x >= 0 && x < s.Width && y >= 0 && y < s.Height {
+	// Only allow drawing in the game area, not the HUD area
+	if x >= 0 && x < s.Width && y >= 0 && y < s.GameHeight {
 		s.Buffer[y][x] = Cell{
 			Char:    char,
 			FgColor: fg,
@@ -62,12 +72,15 @@ func (s *Screen) SetCell(x, y int, char rune, fg, bg color.RGBA) {
 
 func (s *Screen) Render() string {
 	var builder strings.Builder
-	var lastFg, lastBg color.RGBA
 
-	// Move cursor to top-left
+	// Move cursor to top-left and render game area
 	builder.WriteString("\x1b[H")
 
-	for y := 0; y < s.Height; y++ {
+	var lastFg, lastBg color.RGBA
+	for y := 0; y < s.GameHeight; y++ {
+		// Position cursor at start of this row
+		builder.WriteString(fmt.Sprintf("\x1b[%d;1H", y+1))
+
 		for x := 0; x < s.Width; x++ {
 			cell := s.Buffer[y][x]
 
@@ -85,7 +98,26 @@ func (s *Screen) Render() string {
 		}
 	}
 
+	// Render HUD at bottom
+	s.renderHUD(&builder)
+
 	// Reset colors at the end
 	builder.WriteString("\x1b[0m")
 	return builder.String()
+}
+
+func (s *Screen) renderHUD(builder *strings.Builder) {
+	// Position cursor at HUD area (second to last row)
+	hudRow := s.Height - 1
+	builder.WriteString(fmt.Sprintf("\x1b[%d;1H", hudRow))
+
+	// Set HUD colors (white text on dark blue background)
+	builder.WriteString("\x1b[38;2;255;255;255m\x1b[48;2;0;0;100m")
+
+	// Clear the HUD line and write debug message
+	hudLine := fmt.Sprintf("%-*s", s.Width, s.debugMsg)
+	if len(hudLine) > s.Width {
+		hudLine = hudLine[:s.Width]
+	}
+	builder.WriteString(hudLine)
 }

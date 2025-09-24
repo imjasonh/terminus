@@ -19,8 +19,11 @@ func NewRenderer(width, height int) *Renderer {
 	}
 }
 
-func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen) {
+func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen, lights []game.LightSource, projectiles []*game.Projectile) {
 	screen.Clear()
+
+	// Update renderer to use game area height
+	gameHeight := screen.GameHeight
 
 	// Cast rays for each column of the screen
 	for x := 0; x < r.screenWidth; x++ {
@@ -98,21 +101,29 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		}
 
 		// Calculate height of line to draw on screen
-		lineHeight := int(float64(r.screenHeight) / perpWallDist)
+		lineHeight := int(float64(gameHeight) / perpWallDist)
 
 		// Calculate lowest and highest pixel to fill in current stripe
-		drawStart := -lineHeight/2 + r.screenHeight/2
+		drawStart := -lineHeight/2 + gameHeight/2
 		if drawStart < 0 {
 			drawStart = 0
 		}
-		drawEnd := lineHeight/2 + r.screenHeight/2
-		if drawEnd >= r.screenHeight {
-			drawEnd = r.screenHeight - 1
+		drawEnd := lineHeight/2 + gameHeight/2
+		if drawEnd >= gameHeight {
+			drawEnd = gameHeight - 1
 		}
 
-		// Choose wall color based on wall type, side, and distance
+		// Calculate wall position for lighting
+		var wallPos game.Vector
+		if side == 0 {
+			wallPos = game.Vector{float64(mapX), player.Position.Y + perpWallDist*rayDir.Y}
+		} else {
+			wallPos = game.Vector{player.Position.X + perpWallDist*rayDir.X, float64(mapY)}
+		}
+
+		// Choose wall color based on wall type, side, distance, and lighting
 		wallType := worldMap.GetWallType(mapX, mapY)
-		wallColor := r.getWallColor(wallType, side, perpWallDist)
+		wallColor := r.getWallColor(wallType, side, perpWallDist, wallPos, lights)
 
 		// Draw the wall strip
 		for y := drawStart; y <= drawEnd; y++ {
@@ -123,7 +134,7 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		for y := 0; y < drawStart; y++ {
 			// Calculate actual distance to ceiling at this pixel
 			// The further from the center line, the further away the ceiling appears
-			rowDistance := float64(r.screenHeight) / (2.0*float64(r.screenHeight/2-y) - 1.0)
+			rowDistance := float64(gameHeight) / (2.0*float64(gameHeight/2-y) - 1.0)
 			if rowDistance < 0 {
 				rowDistance = perpWallDist // Fallback for edge cases
 			}
@@ -133,10 +144,10 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		}
 
 		// Draw floor with proper distance-based shading
-		for y := drawEnd + 1; y < r.screenHeight; y++ {
+		for y := drawEnd + 1; y < gameHeight; y++ {
 			// Calculate actual distance to floor at this pixel
 			// The further from the center line, the further away the floor appears
-			rowDistance := float64(r.screenHeight) / (2.0*float64(y-r.screenHeight/2) - 1.0)
+			rowDistance := float64(gameHeight) / (2.0*float64(y-gameHeight/2) - 1.0)
 			if rowDistance < 0 {
 				rowDistance = perpWallDist // Fallback for edge cases
 			}
@@ -145,9 +156,86 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 			screen.SetCell(x, y, ' ', floorColor, floorColor)
 		}
 	}
+
+	// Render fireballs as sprites
+	r.renderFireballs(player, screen, projectiles)
 }
 
-func (r *Renderer) getWallColor(wallType int, side int, distance float64) color.RGBA {
+func (r *Renderer) renderFireballs(player *game.Player, screen *screen.Screen, projectiles []*game.Projectile) {
+	for _, projectile := range projectiles {
+		if !projectile.Active || projectile.Type != game.Fireball {
+			continue
+		}
+
+		// Transform fireball position relative to player
+		relativePos := projectile.Position.Sub(player.Position)
+
+		// Rotate relative to player's view direction
+		cos := player.Direction.X
+		sin := -player.Direction.Y
+		transformedX := cos*relativePos.X - sin*relativePos.Y
+		transformedY := sin*relativePos.X + cos*relativePos.Y
+
+		// Skip if behind player
+		if transformedY <= 0.1 {
+			continue
+		}
+
+		// Project to screen coordinates
+		screenX := int((float64(r.screenWidth) / 2) * (1.0 + transformedX/transformedY))
+
+		// Check if on screen
+		if screenX < 0 || screenX >= r.screenWidth {
+			continue
+		}
+
+		// Calculate fireball size based on distance - closer = bigger
+		gameHeight := screen.GameHeight
+
+		// Use proper perspective projection for size
+		fireballSize := int(float64(gameHeight) / transformedY * 0.3) // Scale factor for good visibility
+
+		// Clamp size for reasonable bounds
+		if fireballSize < 1 {
+			fireballSize = 1 // Very far away = tiny dot
+		}
+		if fireballSize > gameHeight/2 {
+			fireballSize = gameHeight / 2 // Very close = big but not too big
+		}
+
+		// Draw fireball
+		startY := gameHeight/2 - fireballSize/2
+		endY := gameHeight/2 + fireballSize/2
+
+		if startY < 0 {
+			startY = 0
+		}
+		if endY >= gameHeight {
+			endY = gameHeight - 1
+		}
+
+		// Bright white fireball
+		fireballColor := color.RGBA{255, 255, 255, 255} // Pure white
+
+		// Calculate width based on size (bigger fireballs are wider)
+		fireballWidth := fireballSize / 3 // Width proportional to height
+		if fireballWidth < 1 {
+			fireballWidth = 1 // At least 1 pixel wide
+		}
+
+		// Draw fireball sprite with proper scaling
+		for y := startY; y <= endY; y++ {
+			for xOffset := -fireballWidth / 2; xOffset <= fireballWidth/2; xOffset++ {
+				drawX := screenX + xOffset
+				if drawX >= 0 && drawX < r.screenWidth {
+					screen.SetCell(drawX, y, '●', fireballColor, fireballColor)
+				}
+			}
+		}
+	}
+}
+
+func (r *Renderer) getWallColor(wallType int, side int, distance float64, pos game.Vector, lights []game.LightSource) color.RGBA {
 	var baseColor color.RGBA
 
 	switch wallType {
@@ -184,8 +272,20 @@ func (r *Renderer) getWallColor(wallType int, side int, distance float64) color.
 		distanceFactor = 0.2 // Minimum visibility
 	}
 
-	// Combine both factors
-	finalFactor := sideFactor * distanceFactor
+	// Calculate lighting from fireballs
+	lightFactor := 0.0
+	for _, light := range lights {
+		lightFactor += light.GetLightingAt(pos)
+	}
+	if lightFactor > 1.0 {
+		lightFactor = 1.0
+	}
+
+	// Combine all factors (distance, side, and lighting)
+	finalFactor := sideFactor * (distanceFactor + lightFactor*0.8) // Lighting adds brightness
+	if finalFactor > 1.0 {
+		finalFactor = 1.0
+	}
 
 	return color.RGBA{
 		uint8(float64(baseColor.R) * finalFactor),
