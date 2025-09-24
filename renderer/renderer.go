@@ -116,9 +116,9 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		// Calculate wall position for lighting
 		var wallPos game.Vector
 		if side == 0 {
-			wallPos = game.Vector{float64(mapX), player.Position.Y + perpWallDist*rayDir.Y}
+			wallPos = game.Vector{X: float64(mapX), Y: player.Position.Y + perpWallDist*rayDir.Y}
 		} else {
-			wallPos = game.Vector{player.Position.X + perpWallDist*rayDir.X, float64(mapY)}
+			wallPos = game.Vector{X: player.Position.X + perpWallDist*rayDir.X, Y: float64(mapY)}
 		}
 
 		// Choose wall color based on wall type, side, distance, and lighting

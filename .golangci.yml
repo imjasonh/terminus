@@ -1,0 +1,9 @@
+version: "2"
+
+linters:
+  disable:
+    - errcheck  # Ignore errcheck findings as requested
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

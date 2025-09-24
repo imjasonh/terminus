@@ -109,7 +109,7 @@ func (s *Screen) Render() string {
 func (s *Screen) renderHUD(builder *strings.Builder) {
 	// Position cursor at HUD area (second to last row)
 	hudRow := s.Height - 1
-	builder.WriteString(fmt.Sprintf("\x1b[%d;1H", hudRow))
+	fmt.Fprintf(builder, "\x1b[%d;1H", hudRow)
 
 	// Set HUD colors (white text on dark blue background)
 	builder.WriteString("\x1b[38;2;255;255;255m\x1b[48;2;0;0;100m")
