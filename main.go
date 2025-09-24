@@ -16,10 +16,10 @@ import (
 	"github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
-	"terminus/game"
-	"terminus/renderer"
-	"terminus/screen"
-	"terminus/server"
+	"github.com/imjasonh/terminus/game"
+	"github.com/imjasonh/terminus/renderer"
+	"github.com/imjasonh/terminus/screen"
+	"github.com/imjasonh/terminus/server"
 )
 
 var gameServer *server.GameServer
@@ -224,10 +224,11 @@ func runPlayerSession(s ssh.Session, playerSession *server.PlayerSession, gameSc
 
 			gameScreen.SetDebugMessage(debugMsg)
 
-			// Render the game with shared projectiles and other players
+			// Render the game with shared projectiles, other players, and NPCs
 			lights := gameServer.ProjectileManager.GetActiveLights()
 			otherPlayers := gameServer.GetOtherPlayers(playerSession.ID)
-			gameRenderer.Render(player, gameServer.Map, gameScreen, lights, gameServer.ProjectileManager.Projectiles, otherPlayers)
+			npcs := gameServer.GetNPCs()
+			gameRenderer.Render(player, gameServer.Map, gameScreen, lights, gameServer.ProjectileManager.Projectiles, otherPlayers, npcs)
 			fmt.Fprint(s, gameScreen.Render())
 
 		case win := <-winCh:

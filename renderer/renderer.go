@@ -3,8 +3,9 @@ package renderer
 import (
 	"image/color"
 	"math"
-	"terminus/game"
-	"terminus/screen"
+
+	"github.com/imjasonh/terminus/game"
+	"github.com/imjasonh/terminus/screen"
 )
 
 type Renderer struct {
@@ -21,7 +22,7 @@ func NewRenderer(width, height int) *Renderer {
 	}
 }
 
-func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen, lights []game.LightSource, projectiles []*game.Projectile, otherPlayers []*game.Player) {
+func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen, lights []game.LightSource, projectiles []*game.Projectile, otherPlayers []*game.Player, npcs []*game.NPC) {
 	screen.Clear()
 
 	// Clear Z-buffer (initialize with max depth)
@@ -167,11 +168,11 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		}
 	}
 
-	// Render all sprites (projectiles and other players)
-	r.renderAllSprites(player, screen, projectiles, otherPlayers)
+	// Render all sprites (projectiles, other players, and NPCs)
+	r.renderAllSprites(player, screen, projectiles, otherPlayers, npcs)
 }
 
-func (r *Renderer) renderAllSprites(player *game.Player, screen *screen.Screen, projectiles []*game.Projectile, otherPlayers []*game.Player) {
+func (r *Renderer) renderAllSprites(player *game.Player, screen *screen.Screen, projectiles []*game.Projectile, otherPlayers []*game.Player, npcs []*game.NPC) {
 	// Collect and sort sprites by distance (far to near)
 	var sprites []sprite
 
@@ -221,6 +222,28 @@ func (r *Renderer) renderAllSprites(player *game.Player, screen *screen.Screen, 
 			transformedX: transformedX,
 			transformedY: transformedY,
 			spriteType:   "player",
+		})
+	}
+
+	// Add NPC sprites
+	for _, npc := range npcs {
+		// Transform NPC position relative to current player
+		relativePos := npc.Position.Sub(player.Position)
+
+		// Rotate relative to player's view direction using proper 2D rotation
+		transformedY := relativePos.X*player.Direction.X + relativePos.Y*player.Direction.Y
+		transformedX := relativePos.X*player.Direction.Y + relativePos.Y*(-player.Direction.X)
+
+		// Skip if behind player
+		if transformedY <= 0.1 {
+			continue
+		}
+
+		sprites = append(sprites, sprite{
+			pos:          npc.Position,
+			transformedX: transformedX,
+			transformedY: transformedY,
+			spriteType:   "npc",
 		})
 	}
 
@@ -282,6 +305,16 @@ func (r *Renderer) renderSprite(spr sprite, player *game.Player, screen *screen.
 		}
 		spriteChar = '@'
 		spriteColor = color.RGBA{0, 255, 0, 255} // Green player
+	case "npc":
+		// NPCs are slightly smaller than players
+		baseSize := float64(gameHeight) / spr.transformedY * 1.0
+		spriteSize = int(baseSize + 0.5) // Round properly
+		// Clamp to reasonable bounds for stability
+		if spriteSize < 3 {
+			spriteSize = 3
+		}
+		spriteChar = '◐'                           // Half-filled circle
+		spriteColor = color.RGBA{0, 150, 255, 255} // Blue NPC
 	default:
 		return
 	}
@@ -305,11 +338,14 @@ func (r *Renderer) renderSprite(spr sprite, player *game.Player, screen *screen.
 		endY = gameHeight - 1
 	}
 
-	// Calculate horizontal width - make players even wider
+	// Calculate horizontal width - different widths for different sprite types
 	var spriteWidth int
-	if spr.spriteType == "player" {
+	switch spr.spriteType {
+	case "player":
 		spriteWidth = (spriteSize * 3) / 4 // Players are much wider - almost as wide as they are tall
-	} else {
+	case "npc":
+		spriteWidth = spriteSize / 2 // NPCs are medium width
+	default: // fireballs and others
 		spriteWidth = spriteSize / 3 // Fireballs stay normal width
 	}
 	if spriteWidth < 1 {
@@ -324,39 +360,42 @@ func (r *Renderer) renderSprite(spr sprite, player *game.Player, screen *screen.
 		if drawX >= 0 && drawX < r.screenWidth && spr.transformedY < r.zBuffer[drawX]+0.1 {
 			// Draw the sprite column
 			for y := startY; y <= endY; y++ {
-				// Render fireballs with proper appearance
-				if spr.spriteType == "fireball" {
+				centerY := startY + (endY-startY)/2
+				distFromCenter := math.Abs(float64(y-centerY)) / float64(spriteSize/2+1)
+				distFromCenterX := math.Abs(float64(xOffset)) / float64(spriteWidth/2+1)
+
+				var intensity float64
+				var threshold float64
+				var brightnessMult float64
+
+				switch spr.spriteType {
+				case "fireball":
 					// Simple circular pattern for fireballs
-					centerY := startY + (endY-startY)/2
-					distFromCenter := math.Abs(float64(y-centerY)) / float64(spriteSize/2+1)
-					distFromCenterX := math.Abs(float64(xOffset)) / float64(spriteWidth/2+1)
-
-					intensity := 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX)
-					if intensity > 0.1 { // Low threshold for visibility
-						finalColor := color.RGBA{
-							uint8(math.Min(255, float64(spriteColor.R)*intensity*1.2)),
-							uint8(math.Min(255, float64(spriteColor.G)*intensity*1.2)),
-							uint8(math.Min(255, float64(spriteColor.B)*intensity*1.2)),
-							255,
-						}
-						screen.SetCell(drawX, y, spriteChar, finalColor, finalColor)
-					}
-				} else {
+					intensity = 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX)
+					threshold = 0.1 // Low threshold for visibility
+					brightnessMult = 1.2
+				case "player":
 					// Make player sprites more solid and visible
-					centerY := startY + (endY-startY)/2
-					distFromCenter := math.Abs(float64(y-centerY)) / float64(spriteSize/2+1)
-					distFromCenterX := math.Abs(float64(xOffset)) / float64(spriteWidth/2+1)
+					intensity = 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX*0.5) // Less fade on X axis
+					threshold = 0.05                                                                               // Very low threshold for maximum visibility
+					brightnessMult = 1.5
+				case "npc":
+					// NPCs are visible but not as prominent as players
+					intensity = 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX*0.7) // Medium fade
+					threshold = 0.15                                                                               // Medium threshold
+					brightnessMult = 1.3
+				default:
+					continue
+				}
 
-					intensity := 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX*0.5) // Less fade on X axis
-					if intensity > 0.05 {                                                                           // Very low threshold for maximum visibility
-						finalColor := color.RGBA{
-							uint8(math.Min(255, float64(spriteColor.R)*intensity*1.5)),
-							uint8(math.Min(255, float64(spriteColor.G)*intensity*1.5)),
-							uint8(math.Min(255, float64(spriteColor.B)*intensity*1.5)),
-							255,
-						}
-						screen.SetCell(drawX, y, spriteChar, finalColor, finalColor)
+				if intensity > threshold {
+					finalColor := color.RGBA{
+						uint8(math.Min(255, float64(spriteColor.R)*intensity*brightnessMult)),
+						uint8(math.Min(255, float64(spriteColor.G)*intensity*brightnessMult)),
+						uint8(math.Min(255, float64(spriteColor.B)*intensity*brightnessMult)),
+						255,
 					}
+					screen.SetCell(drawX, y, spriteChar, finalColor, finalColor)
 				}
 			}
 		}

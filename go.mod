@@ -1,4 +1,4 @@
-module terminus
+module github.com/imjasonh/terminus
 
 go 1.25.1
 
