@@ -122,6 +122,20 @@ func (gs *GameServer) Update(deltaTime float64) {
 	gs.ProjectileManager.Update(deltaTime, gs.Map)
 }
 
+// GetOtherPlayers returns all players except the specified one
+func (gs *GameServer) GetOtherPlayers(excludeSessionID string) []*game.Player {
+	gs.PlayersMutex.RLock()
+	defer gs.PlayersMutex.RUnlock()
+
+	var otherPlayers []*game.Player
+	for sessionID, session := range gs.Players {
+		if sessionID != excludeSessionID && session.Connected {
+			otherPlayers = append(otherPlayers, session.Player)
+		}
+	}
+	return otherPlayers
+}
+
 // GetDebugInfo returns debug information about server state
 func (gs *GameServer) GetDebugInfo() string {
 	gs.PlayersMutex.RLock()

@@ -10,17 +10,24 @@ import (
 type Renderer struct {
 	screenWidth  int
 	screenHeight int
+	zBuffer      []float64 // Z-buffer for depth testing
 }
 
 func NewRenderer(width, height int) *Renderer {
 	return &Renderer{
 		screenWidth:  width,
 		screenHeight: height,
+		zBuffer:      make([]float64, width), // Initialize Z-buffer
 	}
 }
 
-func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen, lights []game.LightSource, projectiles []*game.Projectile) {
+func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *screen.Screen, lights []game.LightSource, projectiles []*game.Projectile, otherPlayers []*game.Player) {
 	screen.Clear()
+
+	// Clear Z-buffer (initialize with max depth)
+	for i := range r.zBuffer {
+		r.zBuffer[i] = math.Inf(1) // Infinity represents maximum depth
+	}
 
 	// Update renderer to use game area height
 	gameHeight := screen.GameHeight
@@ -121,6 +128,9 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 			wallPos = game.Vector{X: player.Position.X + perpWallDist*rayDir.X, Y: float64(mapY)}
 		}
 
+		// Store wall distance in Z-buffer for sprite depth testing
+		r.zBuffer[x] = perpWallDist
+
 		// Choose wall color based on wall type, side, distance, and lighting
 		wallType := worldMap.GetWallType(mapX, mapY)
 		wallColor := r.getWallColor(wallType, side, perpWallDist, wallPos, lights)
@@ -157,11 +167,15 @@ func (r *Renderer) Render(player *game.Player, worldMap *game.Map, screen *scree
 		}
 	}
 
-	// Render fireballs as sprites
-	r.renderFireballs(player, screen, projectiles)
+	// Render all sprites (projectiles and other players)
+	r.renderAllSprites(player, screen, projectiles, otherPlayers)
 }
 
-func (r *Renderer) renderFireballs(player *game.Player, screen *screen.Screen, projectiles []*game.Projectile) {
+func (r *Renderer) renderAllSprites(player *game.Player, screen *screen.Screen, projectiles []*game.Projectile, otherPlayers []*game.Player) {
+	// Collect and sort sprites by distance (far to near)
+	var sprites []sprite
+
+	// Add projectile sprites
 	for _, projectile := range projectiles {
 		if !projectile.Active || projectile.Type != game.Fireball {
 			continue
@@ -170,65 +184,179 @@ func (r *Renderer) renderFireballs(player *game.Player, screen *screen.Screen, p
 		// Transform fireball position relative to player
 		relativePos := projectile.Position.Sub(player.Position)
 
-		// Rotate relative to player's view direction
-		cos := player.Direction.X
-		sin := -player.Direction.Y
-		transformedX := cos*relativePos.X - sin*relativePos.Y
-		transformedY := sin*relativePos.X + cos*relativePos.Y
+		// Rotate relative to player's view direction using proper 2D rotation
+		// We want transformedY to be the distance in front of the player
+		transformedY := relativePos.X*player.Direction.X + relativePos.Y*player.Direction.Y
+		transformedX := relativePos.X*player.Direction.Y + relativePos.Y*(-player.Direction.X)
 
 		// Skip if behind player
 		if transformedY <= 0.1 {
 			continue
 		}
 
-		// Project to screen coordinates
-		screenX := int((float64(r.screenWidth) / 2) * (1.0 + transformedX/transformedY))
+		sprites = append(sprites, sprite{
+			pos:          projectile.Position,
+			transformedX: transformedX,
+			transformedY: transformedY,
+			spriteType:   "fireball",
+		})
+	}
 
-		// Check if on screen
-		if screenX < 0 || screenX >= r.screenWidth {
+	// Add other player sprites
+	for _, otherPlayer := range otherPlayers {
+		// Transform other player position relative to current player
+		relativePos := otherPlayer.Position.Sub(player.Position)
+
+		// Rotate relative to player's view direction using proper 2D rotation
+		transformedY := relativePos.X*player.Direction.X + relativePos.Y*player.Direction.Y
+		transformedX := relativePos.X*player.Direction.Y + relativePos.Y*(-player.Direction.X)
+
+		// Skip if behind player
+		if transformedY <= 0.1 {
 			continue
 		}
 
-		// Calculate fireball size based on distance - closer = bigger
-		gameHeight := screen.GameHeight
+		sprites = append(sprites, sprite{
+			pos:          otherPlayer.Position,
+			transformedX: transformedX,
+			transformedY: transformedY,
+			spriteType:   "player",
+		})
+	}
 
-		// Use proper perspective projection for size
-		fireballSize := int(float64(gameHeight) / transformedY * 0.3) // Scale factor for good visibility
-
-		// Clamp size for reasonable bounds
-		if fireballSize < 1 {
-			fireballSize = 1 // Very far away = tiny dot
+	// Sort sprites from farthest to nearest (painter's algorithm)
+	for i := 0; i < len(sprites)-1; i++ {
+		for j := i + 1; j < len(sprites); j++ {
+			if sprites[i].transformedY < sprites[j].transformedY {
+				sprites[i], sprites[j] = sprites[j], sprites[i]
+			}
 		}
-		if fireballSize > gameHeight/2 {
-			fireballSize = gameHeight / 2 // Very close = big but not too big
+	}
+
+	// Render each sprite
+	for _, spr := range sprites {
+		r.renderSprite(spr, player, screen)
+	}
+}
+
+// sprite represents a renderable sprite in 3D space
+type sprite struct {
+	pos          game.Vector
+	transformedX float64
+	transformedY float64
+	spriteType   string
+}
+
+// renderSprite renders a single sprite with proper Z-buffer testing
+func (r *Renderer) renderSprite(spr sprite, player *game.Player, screen *screen.Screen) {
+	gameHeight := screen.GameHeight
+
+	// Project to screen coordinates using same method as wall renderer
+	// Calculate where this sprite appears on screen relative to camera plane
+	cameraPlaneLength := math.Sqrt(player.CameraPlane.X*player.CameraPlane.X + player.CameraPlane.Y*player.CameraPlane.Y)
+	spriteScreenX := spr.transformedX / spr.transformedY / cameraPlaneLength
+	screenX := int(float64(r.screenWidth) / 2 * (1.0 + spriteScreenX))
+
+	// Check if on screen
+	if screenX < 0 || screenX >= r.screenWidth {
+		return
+	}
+
+	// Calculate sprite size based on distance
+	var spriteSize int
+	var spriteChar rune
+	var spriteColor color.RGBA
+
+	switch spr.spriteType {
+	case "fireball":
+		spriteSize = int(float64(gameHeight) / spr.transformedY * 0.5) // Good size for fireballs
+		spriteChar = '●'
+		spriteColor = color.RGBA{255, 150, 0, 255} // Bright orange fireball
+	case "player":
+		// More stable size calculation - less sensitive to small distance changes
+		baseSize := float64(gameHeight) / spr.transformedY * 1.2
+		spriteSize = int(baseSize + 0.5) // Round properly
+		// Clamp to reasonable bounds for stability
+		if spriteSize < 4 {
+			spriteSize = 4
 		}
+		spriteChar = '@'
+		spriteColor = color.RGBA{0, 255, 0, 255} // Green player
+	default:
+		return
+	}
 
-		// Draw fireball
-		startY := gameHeight/2 - fireballSize/2
-		endY := gameHeight/2 + fireballSize/2
+	// Clamp size
+	if spriteSize < 1 {
+		spriteSize = 1
+	}
+	if spriteSize > gameHeight/2 {
+		spriteSize = gameHeight / 2
+	}
 
-		if startY < 0 {
-			startY = 0
-		}
-		if endY >= gameHeight {
-			endY = gameHeight - 1
-		}
+	// Calculate vertical bounds
+	startY := gameHeight/2 - spriteSize/2
+	endY := gameHeight/2 + spriteSize/2
 
-		// Bright white fireball
-		fireballColor := color.RGBA{255, 255, 255, 255} // Pure white
+	if startY < 0 {
+		startY = 0
+	}
+	if endY >= gameHeight {
+		endY = gameHeight - 1
+	}
 
-		// Calculate width based on size (bigger fireballs are wider)
-		fireballWidth := fireballSize / 3 // Width proportional to height
-		if fireballWidth < 1 {
-			fireballWidth = 1 // At least 1 pixel wide
-		}
+	// Calculate horizontal width - make players even wider
+	var spriteWidth int
+	if spr.spriteType == "player" {
+		spriteWidth = (spriteSize * 3) / 4 // Players are much wider - almost as wide as they are tall
+	} else {
+		spriteWidth = spriteSize / 3 // Fireballs stay normal width
+	}
+	if spriteWidth < 1 {
+		spriteWidth = 1
+	}
 
-		// Draw fireball sprite with proper scaling
-		for y := startY; y <= endY; y++ {
-			for xOffset := -fireballWidth / 2; xOffset <= fireballWidth/2; xOffset++ {
-				drawX := screenX + xOffset
-				if drawX >= 0 && drawX < r.screenWidth {
-					screen.SetCell(drawX, y, '●', fireballColor, fireballColor)
+	// Render sprite with Z-buffer testing
+	for xOffset := -spriteWidth / 2; xOffset <= spriteWidth/2; xOffset++ {
+		drawX := screenX + xOffset
+
+		// Check bounds and Z-buffer for proper depth testing
+		if drawX >= 0 && drawX < r.screenWidth && spr.transformedY < r.zBuffer[drawX]+0.1 {
+			// Draw the sprite column
+			for y := startY; y <= endY; y++ {
+				// Render fireballs with proper appearance
+				if spr.spriteType == "fireball" {
+					// Simple circular pattern for fireballs
+					centerY := startY + (endY-startY)/2
+					distFromCenter := math.Abs(float64(y-centerY)) / float64(spriteSize/2+1)
+					distFromCenterX := math.Abs(float64(xOffset)) / float64(spriteWidth/2+1)
+
+					intensity := 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX)
+					if intensity > 0.1 { // Low threshold for visibility
+						finalColor := color.RGBA{
+							uint8(math.Min(255, float64(spriteColor.R)*intensity*1.2)),
+							uint8(math.Min(255, float64(spriteColor.G)*intensity*1.2)),
+							uint8(math.Min(255, float64(spriteColor.B)*intensity*1.2)),
+							255,
+						}
+						screen.SetCell(drawX, y, spriteChar, finalColor, finalColor)
+					}
+				} else {
+					// Make player sprites more solid and visible
+					centerY := startY + (endY-startY)/2
+					distFromCenter := math.Abs(float64(y-centerY)) / float64(spriteSize/2+1)
+					distFromCenterX := math.Abs(float64(xOffset)) / float64(spriteWidth/2+1)
+
+					intensity := 1.0 - math.Sqrt(distFromCenter*distFromCenter+distFromCenterX*distFromCenterX*0.5) // Less fade on X axis
+					if intensity > 0.05 {                                                                           // Very low threshold for maximum visibility
+						finalColor := color.RGBA{
+							uint8(math.Min(255, float64(spriteColor.R)*intensity*1.5)),
+							uint8(math.Min(255, float64(spriteColor.G)*intensity*1.5)),
+							uint8(math.Min(255, float64(spriteColor.B)*intensity*1.5)),
+							255,
+						}
+						screen.SetCell(drawX, y, spriteChar, finalColor, finalColor)
+					}
 				}
 			}
 		}

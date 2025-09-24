@@ -51,3 +51,5 @@ image-to-ansi
 # Editor backup files
 *.bak
 *.backup
+
+*host_key

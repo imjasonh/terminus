@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"terminus/game"
 	"terminus/renderer"
@@ -18,6 +23,38 @@ import (
 )
 
 var gameServer *server.GameServer
+
+// loadOrCreateHostKey loads an existing host key or creates a new one
+func loadOrCreateHostKey(filename string) (ssh.Signer, error) {
+	// Try to load existing key
+	if keyData, err := os.ReadFile(filename); err == nil {
+		return gossh.ParsePrivateKey(keyData)
+	}
+
+	// Generate new RSA key
+	clog.Info("Generating new SSH host key...")
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	// Convert to PEM format
+	privateKeyPEM := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	}
+
+	// Save to file
+	keyData := pem.EncodeToMemory(privateKeyPEM)
+	if err := os.WriteFile(filename, keyData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to save private key: %w", err)
+	}
+
+	clog.Infof("Saved new SSH host key to %s", filename)
+
+	// Parse the key
+	return gossh.ParsePrivateKey(keyData)
+}
 
 func main() {
 	// Parse command line arguments
@@ -38,10 +75,17 @@ func main() {
 	// Start the global game update loop
 	go globalGameLoop()
 
+	// Load or generate SSH host key
+	hostKey, err := loadOrCreateHostKey("terminus_host_key")
+	if err != nil {
+		clog.Fatalf("Failed to load or create host key: %v", err)
+	}
+
 	// Setup SSH server
 	sshServer := &ssh.Server{
-		Addr:    ":2222",
-		Handler: handleSSHSession,
+		Addr:        ":2222",
+		Handler:     handleSSHSession,
+		HostSigners: []ssh.Signer{hostKey},
 	}
 
 	clog.Info("Terminus SSH server starting on port 2222...")
@@ -180,9 +224,10 @@ func runPlayerSession(s ssh.Session, playerSession *server.PlayerSession, gameSc
 
 			gameScreen.SetDebugMessage(debugMsg)
 
-			// Render the game with shared projectiles
+			// Render the game with shared projectiles and other players
 			lights := gameServer.ProjectileManager.GetActiveLights()
-			gameRenderer.Render(player, gameServer.Map, gameScreen, lights, gameServer.ProjectileManager.Projectiles)
+			otherPlayers := gameServer.GetOtherPlayers(playerSession.ID)
+			gameRenderer.Render(player, gameServer.Map, gameScreen, lights, gameServer.ProjectileManager.Projectiles, otherPlayers)
 			fmt.Fprint(s, gameScreen.Render())
 
 		case win := <-winCh:
