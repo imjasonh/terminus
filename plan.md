@@ -10,7 +10,7 @@ Here is a detailed, multi-phased plan designed to be implemented by an AI coding
 
 **Core Concepts:**
 
-1.  **Raycasting:** We will not be rendering a true 3D world with polygons. Instead, for each column of the terminal screen, we'll cast a single mathematical "ray" from the player's position. We calculate where this ray intersects with a wall on our 2D map. The distance to that wall determines how tall the wall slice is drawn in that column. This is computationally very cheap and perfect for this application. 
+1.  **Raycasting:** We will not be rendering a true 3D world with polygons. Instead, for each column of the terminal screen, we'll cast a single mathematical "ray" from the player's position. We calculate where this ray intersects with a wall on our 2D map. The distance to that wall determines how tall the wall slice is drawn in that column. This is computationally very cheap and perfect for this application.
 
 2.  **Server-Side Game Loop:** The entire game state (player positions, map, etc.) and the rendering logic will live on the server. The server will run a continuous loop for each connected player: process their input, update their state, render their view, and send the resulting string of characters and ANSI codes back to their SSH client.
 

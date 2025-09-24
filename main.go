@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"time"
 
+	"github.com/chainguard-dev/clog"
 	"github.com/google/uuid"
 
 	"github.com/gliderlabs/ssh"
@@ -29,7 +29,7 @@ func main() {
 	// Load map from file
 	worldMap, err := game.LoadMapFromFile(mapFile)
 	if err != nil {
-		log.Fatalf("Failed to load map %s: %v", mapFile, err)
+		clog.Fatalf("Failed to load map %s: %v", mapFile, err)
 	}
 
 	// Initialize game server with 10 player limit
@@ -44,9 +44,9 @@ func main() {
 		Handler: handleSSHSession,
 	}
 
-	log.Printf("Terminus SSH server starting on port 2222...")
-	log.Printf("Connect with: ssh -p 2222 localhost")
-	log.Fatal(sshServer.ListenAndServe())
+	clog.Info("Terminus SSH server starting on port 2222...")
+	clog.Info("Connect with: ssh -p 2222 localhost")
+	clog.Fatalf("ListenAndServe: %v", sshServer.ListenAndServe())
 }
 
 // globalGameLoop runs the shared game state updates
@@ -82,10 +82,10 @@ func handleSSHSession(s ssh.Session) {
 	// Clean up on disconnect
 	defer func() {
 		gameServer.RemovePlayer(sessionID)
-		log.Printf("Player %s disconnected", sessionID[:8])
+		clog.Infof("Player %s disconnected", sessionID[:8])
 	}()
 
-	log.Printf("Player %s connected from %s", sessionID[:8], s.RemoteAddr())
+	clog.Infof("Player %s connected from %s", sessionID[:8], s.RemoteAddr())
 
 	// Get terminal size
 	ptyReq, winCh, isPty := s.Pty()
@@ -124,7 +124,7 @@ func runPlayerSession(s ssh.Session, playerSession *server.PlayerSession, gameSc
 			n, err := s.Read(buf)
 			if err != nil {
 				if err != io.EOF {
-					log.Printf("Input error for player %s: %v", playerSession.ID[:8], err)
+					clog.Infof("Input error for player %s: %v", playerSession.ID[:8], err)
 				}
 				return
 			}

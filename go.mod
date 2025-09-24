@@ -3,6 +3,7 @@ module terminus
 go 1.25.1
 
 require (
+	github.com/chainguard-dev/clog v1.7.0
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/google/uuid v1.6.0
 )

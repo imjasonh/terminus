@@ -1,0 +1,77 @@
+# See https://pre-commit.com for more information
+repos:
+  # General checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-case-conflict
+
+  - repo: local
+    hooks:
+    - id: no-stdlib-log
+      name: check "log" imports
+      description: Enforce that all "log" imports are forbidden
+      entry: '\t"log"'
+      language: pygrep
+      types: [file]
+    - id: no-charmbracelet-log
+      name: check "charmbracelet/log" imports
+      description: Enforce that all "charmbracelet/log" imports are forbidden
+      entry: '\t"github\.com/charmbracelet/log"'
+      language: pygrep
+      types: [file]
+    - id: no-context-todo
+      name: check for context.TODO
+      description: Enforce that no context.TODOs are present in context usage
+      entry: 'context\.TODO\(\)'
+      language: pygrep
+      types: [file]
+
+  # Go checks
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.5.0
+    hooks:
+      - id: golangci-lint
+        args: ['--fix']
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-imports
+      - id: go-mod-tidy
+
+  # Additional Go checks
+  - repo: local
+    hooks:
+      - id: go-build
+        name: go build
+        entry: go build ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+      - id: go-test-race
+        name: go test -race
+        entry: bash -c 'go test -race ./... 2>&1'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Terraform checks
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.100.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        exclude: '^terraform/modules/'
+      - id: terraform_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/terraform/.tflint.hcl
